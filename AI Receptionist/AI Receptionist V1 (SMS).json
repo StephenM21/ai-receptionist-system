@@ -1,0 +1,416 @@
+{
+  "name": "AI Receptionist V1 (SMS)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sms-in",
+        "responseMode": "lastNode",
+        "responseData": "noData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        224
+      ],
+      "id": "2db4e8a5-a014-4aa3-b680-2b943c7468ba",
+      "name": "Webhook",
+      "webhookId": "830a33c0-477a-4cc6-a2bf-c0f254185b70"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node\n * AI Receptionist V1 (SMS)\n */\n\nconst payload = $json.body || {};\nconst from = String(payload.From ?? $json.From ?? \"\").trim();\nconst to = String(payload.To ?? $json.To ?? \"\").trim();\nconst body = String(payload.Body ?? $json.Body ?? \"\").trim();\nconst lowerBody = body.toLowerCase();\n\nif (!from || !to) {\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"Missing phone information. Please try again.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nconst store = $getWorkflowStaticData(\"global\");\nstore.conversations ||= {};\nstore.optOut ||= {};\n\nconst key = `${to}:${from}`;\n\nconst serviceMap = {\n  \"1\": \"mowing\",\n  \"2\": \"cleanup\",\n  \"3\": \"mulch/landscaping\",\n};\n\nconst timelineMap = {\n  \"1\": \"ASAP\",\n  \"2\": \"this week\",\n  \"3\": \"just getting a quote\",\n};\n\nconst bestTimeMap = {\n  \"1\": \"morning\",\n  \"2\": \"afternoon\",\n  \"3\": \"evening\",\n};\n\nfunction resetConversation() {\n  store.conversations[key] = {\n    step: 1,\n    answers: {},\n  };\n}\n\nif ([\"stop\", \"unsubscribe\", \"cancel\", \"end\", \"quit\"].includes(lowerBody)) {\n  store.optOut[key] = true;\n  delete store.conversations[key];\n\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"You’re opted out. Reply START to re-subscribe.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (lowerBody === \"start\") {\n  delete store.optOut[key];\n  resetConversation();\n\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply:\n          \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (store.optOut[key]) {\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"You’re opted out. Reply START to re-subscribe.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (!store.conversations[key]) {\n  resetConversation();\n}\n\nconst convo = store.conversations[key];\nconvo.answers ||= {};\n\nlet reply = \"\";\nlet done = false;\n\nswitch (convo.step) {\n  case 1: {\n    reply =\n      \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\";\n    convo.step = 2;\n    break;\n  }\n\n  case 2: {\n    convo.answers.service = serviceMap[body] || body;\n    reply = \"Got it. What city or ZIP code is the property in?\";\n    convo.step = 3;\n    break;\n  }\n\n  case 3: {\n    convo.answers.location = body;\n    reply =\n      \"When would you like the work done?\\nReply:\\n1) ASAP\\n2) this week\\n3) just getting a quote\";\n    convo.step = 4;\n    break;\n  }\n\n  case 4: {\n    convo.answers.timeline = timelineMap[body] || body;\n    reply =\n      \"What is the best time to contact you?\\nReply:\\n1) morning\\n2) afternoon\\n3) evening\";\n    convo.step = 5;\n    break;\n  }\n\n  case 5: {\n    convo.answers.bestTime = bestTimeMap[body] || body;\n    reply =\n      \"Thanks! Your request has been sent to our team. Someone will reach out shortly.\";\n    done = true;\n    break;\n  }\n\n  default: {\n    resetConversation();\n    reply =\n      \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\";\n    store.conversations[key].step = 2;\n    break;\n  }\n}\n\nconst finalAnswers = { ...convo.answers };\n\nconst summary =\n  `New lead captured\\n` +\n  `From: ${from}\\n` +\n  `Service: ${finalAnswers.service || \"(missing)\"}\\n` +\n  `Location: ${finalAnswers.location || \"(missing)\"}\\n` +\n  `Timeline: ${finalAnswers.timeline || \"(missing)\"}\\n` +\n  `Best time: ${finalAnswers.bestTime || \"(missing)\"}`;\n\nif (done) {\n  resetConversation();\n}\n\nreturn [\n  {\n    json: {\n      from,\n      to,\n      inboundBody: body,\n      reply,\n      done,\n      summary,\n      service: String(finalAnswers.service || \"\"),\n      location: String(finalAnswers.location || \"\"),\n      timeline: String(finalAnswers.timeline || \"\"),\n      bestTime: String(finalAnswers.bestTime || \"\"),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        192
+      ],
+      "id": "68057a02-9f6e-4a7f-aeb2-703bf312a958",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "from": "6097620799",
+        "to": "={{ $json.from }}",
+        "message": "={{$json.reply}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        144,
+        80
+      ],
+      "id": "6f1dae81-ecb4-482b-879c-c46905b016c3",
+      "name": "Send an SMS/MMS/WhatsApp message",
+      "credentials": {
+        "twilioApi": {
+          "id": "FzsalwFCzXtwTJcq",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f5e4fe12-1696-4d34-a4ca-37d9435c088c",
+              "leftValue": "={{ $json.done.toString() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        256
+      ],
+      "id": "9a049846-faa7-403a-9e48-4b345e522f6a",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "from": "16097620799",
+        "to": "16098272219",
+        "message": "={{ $json.summary }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        384,
+        256
+      ],
+      "id": "f1b3940a-9c57-41a8-996e-cbefb33ea7b3",
+      "name": "Send an SMS/MMS/WhatsApp message1",
+      "credentials": {
+        "twilioApi": {
+          "id": "FzsalwFCzXtwTJcq",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s",
+          "mode": "list",
+          "cachedResultName": "AI Receptionist V1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Messages",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "business_to": "=={{ $json.to }}",
+            "customer_from": "=={{ $json.from }}",
+            "inbound_body": "={{ String($json.inboundBody || \"\") }}",
+            "reply": "={{ String($json.reply || \"\") }}",
+            "done": "=={{ $json.done }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_to",
+              "displayName": "business_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_from",
+              "displayName": "customer_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "inbound_body",
+              "displayName": "inbound_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reply",
+              "displayName": "reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "done",
+              "displayName": "done",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        0,
+        0
+      ],
+      "id": "fec2dc5d-0dce-4d41-bb33-994cba197cab",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "raOiUjGh9rxExajh",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s",
+          "mode": "list",
+          "cachedResultName": "AI Receptionist V1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1876671983,
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit#gid=1876671983"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "business_to": "={{ $json.to }}",
+            "location": "={{ $json.location }}",
+            "timeline": "={{ $json.timeline }}",
+            "customer_from": "={{ $json.from }}",
+            "best_time": "={{ $json.bestTime }}",
+            "summary": "={{ $json.summary }}",
+            "service": "={{ $json.service }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_to",
+              "displayName": "business_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_from",
+              "displayName": "customer_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "service",
+              "displayName": "service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timeline",
+              "displayName": "timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "best_time",
+              "displayName": "best_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        256
+      ],
+      "id": "ab9712a6-c2df-43dd-b76a-b7751d87718a",
+      "name": "Append row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "raOiUjGh9rxExajh",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send an SMS/MMS/WhatsApp message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Send an SMS/MMS/WhatsApp message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "4fb29d46-5064-4c86-b380-22949b296e61",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "243e2d34668011de2adfed2a60f898a57fe07379caa43c27d1ef0d3d6482077e"
+  },
+  "id": "8g4S84R4MrbnF85x",
+  "tags": []
+}

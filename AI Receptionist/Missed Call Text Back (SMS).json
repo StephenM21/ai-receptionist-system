@@ -1,0 +1,217 @@
+{
+  "name": "Missed Call Text Back",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voice-in",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -320,
+        16
+      ],
+      "id": "6c31f95d-a721-4353-8aef-bcc0b2ddee32",
+      "name": "Webhook",
+      "webhookId": "c4cbc1d4-4989-4fae-bf60-f0044f5d534f"
+    },
+    {
+      "parameters": {
+        "from": "=16097620799",
+        "to": "={{ $json.from }}",
+        "message": "={{ $json.smsReply }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        336,
+        144
+      ],
+      "id": "60f701a2-c05d-49a0-8e51-53bfb049edea",
+      "name": "Send an SMS/MMS/WhatsApp message",
+      "credentials": {
+        "twilioApi": {
+          "id": "FzsalwFCzXtwTJcq",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.twiml }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        368,
+        -32
+      ],
+      "id": "84fe1965-4fe8-464b-b3a6-1b8cc873bcc4",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body || {};\nconst from = String(payload.From ?? $json.From ?? \"\").trim();\nconst to = String(payload.To ?? $json.To ?? \"\").trim();\n\nconst smsReply =\n  \"Sorry we missed your call. You can reply here with what you need, and our team will follow up as soon as possible.\";\n\nconst twiml =\n  '<?xml version=\"1.0\" encoding=\"UTF-8\"?>' +\n  '<Response>' +\n  '<Say>Sorry we missed your call. Please send us a text with what you need, and our team will follow up shortly.</Say>' +\n  '<Hangup/>' +\n  '</Response>';\n\nreturn [\n  {\n    json: {\n      from,\n      to,\n      smsReply,\n      twiml,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        16
+      ],
+      "id": "a4178c0f-b2f1-462b-a183-7acebdc50aa6",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ",
+          "mode": "list",
+          "cachedResultName": "AI Receptionist Demo V2 DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1201618702,
+          "mode": "list",
+          "cachedResultName": "Missed Calls",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ/edit#gid=1201618702"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "business_to": "={{ $json.to }}",
+            "caller": "={{ $json.to }}",
+            "type": "missed_call"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_to",
+              "displayName": "business_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "caller",
+              "displayName": "caller",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        96,
+        16
+      ],
+      "id": "9d72b047-941c-4815-aaf6-0b000086fb79",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "raOiUjGh9rxExajh",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send an SMS/MMS/WhatsApp message": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Send an SMS/MMS/WhatsApp message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "cfe59261-4eb5-429c-86a7-86a498d208c4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "243e2d34668011de2adfed2a60f898a57fe07379caa43c27d1ef0d3d6482077e"
+  },
+  "id": "7w1BgIA9Pw3xa4EC",
+  "tags": []
+}

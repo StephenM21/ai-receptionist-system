@@ -1,0 +1,479 @@
+{
+  "name": "AI Receptionist V2 (AI Text)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sms-in",
+        "responseMode": "lastNode",
+        "responseData": "noData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -656,
+        32
+      ],
+      "id": "6567e5e5-7111-467f-a88c-8e4db957c2a2",
+      "name": "Webhook",
+      "webhookId": "870c9908-835a-4a51-8a2d-30ebf7976326"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code node\n * AI Receptionist V2\n * - AI understanding\n * - question answering\n * - lead intake\n * - 30 minute timeout reset\n */\n\nconst webhookJson = $('Webhook').first().json || {};\nconst payload = webhookJson.body || {};\n\nconst from = String(payload.From ?? webhookJson.From ?? \"\").trim();\nconst to = String(payload.To ?? webhookJson.To ?? \"\").trim();\nconst body = String(payload.Body ?? webhookJson.Body ?? \"\").trim();\nconst lowerBody = body.toLowerCase();\n\nif (!from || !to) {\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"Missing phone information. Please try again.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\n// ----- AI output handling -----\nconst aiNodeJson = $('AI Agent').first().json || {};\n\nlet aiRaw =\n  aiNodeJson.output ??\n  aiNodeJson.text ??\n  aiNodeJson.response ??\n  aiNodeJson.data ??\n  null;\n\nlet aiData = {};\n\nif (typeof aiRaw === \"string\") {\n  try {\n    aiData = JSON.parse(aiRaw);\n  } catch {\n    aiData = {};\n  }\n} else if (aiRaw && typeof aiRaw === \"object\") {\n  aiData = aiRaw;\n}\n\nconst aiService = aiData.service || null;\nconst aiLocation = aiData.location || null;\nconst aiTimeline = aiData.timeline || null;\nconst aiBestTime = aiData.bestTime || null;\nconst aiIsQuestion = aiData.isQuestion || false;\nconst aiQuestionType = aiData.questionType || null;\nconst aiAnswer = aiData.answer || null;\n\n// ----- Storage -----\nconst store = $getWorkflowStaticData(\"global\");\nstore.conversations ||= {};\nstore.optOut ||= {};\n\nconst key = `${to}:${from}`;\n\nconst serviceMap = {\n  \"1\": \"mowing\",\n  \"2\": \"cleanup\",\n  \"3\": \"mulch/landscaping\",\n};\n\nconst timelineMap = {\n  \"1\": \"ASAP\",\n  \"2\": \"this week\",\n  \"3\": \"just getting a quote\",\n};\n\nconst bestTimeMap = {\n  \"1\": \"morning\",\n  \"2\": \"afternoon\",\n  \"3\": \"evening\",\n};\n\nconst TIMEOUT_MINUTES = 30;\nconst TIMEOUT_MS = TIMEOUT_MINUTES * 60 * 1000;\n\nfunction resetConversation() {\n  store.conversations[key] = {\n    step: 1,\n    answers: {},\n    lastUpdatedAt: Date.now(),\n  };\n}\n\n// ----- STOP / START -----\nif ([\"stop\", \"unsubscribe\", \"cancel\", \"end\", \"quit\"].includes(lowerBody)) {\n  store.optOut[key] = true;\n  delete store.conversations[key];\n\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"You’re opted out. Reply START to re-subscribe.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (lowerBody === \"start\") {\n  delete store.optOut[key];\n  resetConversation();\n\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply:\n          \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (store.optOut[key]) {\n  return [\n    {\n      json: {\n        from,\n        to,\n        inboundBody: body,\n        reply: \"You’re opted out. Reply START to re-subscribe.\",\n        done: false,\n        summary: \"\",\n        service: \"\",\n        location: \"\",\n        timeline: \"\",\n        bestTime: \"\",\n      },\n    },\n  ];\n}\n\nif (!store.conversations[key]) {\n  resetConversation();\n}\n\nconst convo = store.conversations[key];\nconvo.answers ||= {};\n\n// ----- Timeout reset -----\nconst now = Date.now();\nconst lastUpdatedAt = convo.lastUpdatedAt || now;\nconst timedOut = now - lastUpdatedAt > TIMEOUT_MS;\n\nif (timedOut) {\n  resetConversation();\n}\n\nconst currentConvo = store.conversations[key];\ncurrentConvo.answers ||= {};\n\nlet reply = \"\";\nlet done = false;\n\n// ----- AI-first entry point -----\nif (currentConvo.step === 1) {\n  if (aiService) currentConvo.answers.service = aiService;\n  if (aiLocation) currentConvo.answers.location = aiLocation;\n  if (aiTimeline) currentConvo.answers.timeline = aiTimeline;\n  if (aiBestTime) currentConvo.answers.bestTime = aiBestTime;\n\n  if (aiIsQuestion && aiAnswer) {\n    if (\n      currentConvo.answers.service ||\n      currentConvo.answers.location ||\n      currentConvo.answers.timeline ||\n      currentConvo.answers.bestTime\n    ) {\n      if (!currentConvo.answers.service) {\n        reply = `${aiAnswer}\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping`;\n        currentConvo.step = 2;\n      } else if (!currentConvo.answers.location) {\n        reply = `${aiAnswer}\\n\\nGot it. What city or ZIP code is the property in?`;\n        currentConvo.step = 3;\n      } else if (!currentConvo.answers.timeline) {\n        reply = `${aiAnswer}\\n\\nWhen would you like the work done?\\nReply:\\n1) ASAP\\n2) this week\\n3) just getting a quote`;\n        currentConvo.step = 4;\n      } else if (!currentConvo.answers.bestTime) {\n        reply = `${aiAnswer}\\n\\nWhat is the best time to contact you?\\nReply:\\n1) morning\\n2) afternoon\\n3) evening`;\n        currentConvo.step = 5;\n      } else {\n        reply = `${aiAnswer}\\n\\nThanks! Your request has been sent to our team. Someone will reach out shortly.`;\n        done = true;\n      }\n    } else {\n      reply = aiAnswer;\n      currentConvo.step = 1;\n    }\n  } else if (!currentConvo.answers.service) {\n    reply =\n      \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\";\n    currentConvo.step = 2;\n  } else if (!currentConvo.answers.location) {\n    reply = \"Got it. What city or ZIP code is the property in?\";\n    currentConvo.step = 3;\n  } else if (!currentConvo.answers.timeline) {\n    reply =\n      \"When would you like the work done?\\nReply:\\n1) ASAP\\n2) this week\\n3) just getting a quote\";\n    currentConvo.step = 4;\n  } else if (!currentConvo.answers.bestTime) {\n    reply =\n      \"What is the best time to contact you?\\nReply:\\n1) morning\\n2) afternoon\\n3) evening\";\n    currentConvo.step = 5;\n  } else {\n    reply =\n      \"Thanks! Your request has been sent to our team. Someone will reach out shortly.\";\n    done = true;\n  }\n} else {\n  switch (currentConvo.step) {\n    case 2: {\n      currentConvo.answers.service = serviceMap[body] || body;\n      reply = \"Got it. What city or ZIP code is the property in?\";\n      currentConvo.step = 3;\n      break;\n    }\n\n    case 3: {\n      currentConvo.answers.location = body;\n      reply =\n        \"When would you like the work done?\\nReply:\\n1) ASAP\\n2) this week\\n3) just getting a quote\";\n      currentConvo.step = 4;\n      break;\n    }\n\n    case 4: {\n      currentConvo.answers.timeline = timelineMap[body] || body;\n      reply =\n        \"What is the best time to contact you?\\nReply:\\n1) morning\\n2) afternoon\\n3) evening\";\n      currentConvo.step = 5;\n      break;\n    }\n\n    case 5: {\n      currentConvo.answers.bestTime = bestTimeMap[body] || body;\n      reply =\n        \"Thanks! Your request has been sent to our team. Someone will reach out shortly.\";\n      done = true;\n      break;\n    }\n\n    default: {\n      resetConversation();\n      reply =\n        \"Hi! Thanks for contacting us.\\n\\nWhat service do you need?\\nReply:\\n1) mowing\\n2) cleanup\\n3) mulch/landscaping\";\n      store.conversations[key].step = 2;\n      break;\n    }\n  }\n}\n\ncurrentConvo.lastUpdatedAt = now;\n\nconst finalAnswers = { ...currentConvo.answers };\n\nconst summary =\n  `New lead captured\\n` +\n  `From: ${from}\\n` +\n  `Service: ${finalAnswers.service || \"(missing)\"}\\n` +\n  `Location: ${finalAnswers.location || \"(missing)\"}\\n` +\n  `Timeline: ${finalAnswers.timeline || \"(missing)\"}\\n` +\n  `Best time: ${finalAnswers.bestTime || \"(missing)\"}`;\n\nif (done) {\n  resetConversation();\n}\n\nreturn [\n  {\n    json: {\n      from,\n      to,\n      inboundBody: body,\n      reply,\n      done,\n      summary,\n      service: String(finalAnswers.service || \"\"),\n      location: String(finalAnswers.location || \"\"),\n      timeline: String(finalAnswers.timeline || \"\"),\n      bestTime: String(finalAnswers.bestTime || \"\"),\n      aiRaw,\n      aiData,\n      aiIsQuestion,\n      aiQuestionType,\n      aiAnswer,\n      timedOut,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        32
+      ],
+      "id": "84758ed4-253f-4aee-bbaa-78a81e00b326",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "from": "6097620799",
+        "to": "={{ $json.from }}",
+        "message": "={{$json.reply}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        80,
+        16
+      ],
+      "id": "69cc561e-f516-4380-9809-afcfe13449e0",
+      "name": "Send an SMS/MMS/WhatsApp message",
+      "credentials": {
+        "twilioApi": {
+          "id": "FzsalwFCzXtwTJcq",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f5e4fe12-1696-4d34-a4ca-37d9435c088c",
+              "leftValue": "={{ $json.done.toString() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -16,
+        192
+      ],
+      "id": "d69df34a-3730-479c-aec3-f39280e897dc",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "from": "16097620799",
+        "to": "16098272219",
+        "message": "={{ $json.summary }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        288,
+        192
+      ],
+      "id": "03a52e50-5882-4569-9ed1-2669aa420b01",
+      "name": "Send an SMS/MMS/WhatsApp message1",
+      "credentials": {
+        "twilioApi": {
+          "id": "FzsalwFCzXtwTJcq",
+          "name": "Twilio account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ",
+          "mode": "list",
+          "cachedResultName": "AI Receptionist Demo V2 DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Messages",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "business_to": "={{ String($json.to || \"\") }}",
+            "customer_from": "={{ String($json.from || \"\") }}",
+            "inbound_body": "={{ String($json.inboundBody || \"\") }}",
+            "reply": "={{ String($json.reply || \"\") }}",
+            "done": "={{ String($json.done || false) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_to",
+              "displayName": "business_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_from",
+              "displayName": "customer_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "inbound_body",
+              "displayName": "inbound_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reply",
+              "displayName": "reply",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "done",
+              "displayName": "done",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        80,
+        -144
+      ],
+      "id": "50db5548-60dd-4f61-b4e8-4a454530025e",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "raOiUjGh9rxExajh",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ",
+          "mode": "list",
+          "cachedResultName": "AI Receptionist Demo V2 DB",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1vQ_Z6NT_7Bw9HoAHUdqxnl7uQ4JUr0qiG2NZ_5RomVQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1876671983,
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wd29-R2Mu1fuwkEOTGnwLsbIa6jSh6fdjIRb7EDEb7s/edit#gid=1876671983"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ new Date().toISOString() }}",
+            "business_to": "={{ String($json.to || \"\") }}",
+            "location": "={{ String($json.location || \"\") }}",
+            "timeline": "={{ String($json.timeline || \"\") }}",
+            "customer_from": "={{ String($json.from || \"\") }}",
+            "best_time": "={{ String($json.bestTime || \"\") }}",
+            "summary": "={{ String($json.summary || \"\") }}",
+            "service": "={{ String($json.service || \"\") }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_to",
+              "displayName": "business_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_from",
+              "displayName": "customer_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "service",
+              "displayName": "service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timeline",
+              "displayName": "timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "best_time",
+              "displayName": "best_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        144,
+        192
+      ],
+      "id": "ae2590dc-1b20-4c93-b9ec-13603dda11b0",
+      "name": "Append row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "raOiUjGh9rxExajh",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an AI receptionist for a blue-collar service business.\n\nYour job is to read the customer's SMS and do two things:\n\n1. Extract lead information if present\n2. Answer simple service/business questions if asked\n\nBusiness info:\n- The business offers services like lawn mowing, yard cleanup, mulch installation, landscaping, and similar outdoor property services.\n- Service area depends on the business and nearby surrounding towns.\n- Pricing is NOT provided by text. Quotes are given after reviewing the job details.\n- Customers can send requests anytime and the team will respond as soon as possible.\n- If the business has portfolio links, website links, or Instagram links, they can be shared when available.\n\nYou must return ONLY valid JSON in this exact format:\n\n{\n  \"service\": null,\n  \"location\": null,\n  \"timeline\": null,\n  \"bestTime\": null,\n  \"isQuestion\": false,\n  \"questionType\": null,\n  \"answer\": null\n}\n\nRules:\n- service should be one of: mowing, cleanup, mulch, landscaping, snow, other\n- location should be a city, address, or ZIP if present\n- timeline should be values like ASAP, this week, next week, just getting a quote, or null\n- bestTime should be morning, afternoon, evening, or null\n- isQuestion should be true if the customer is asking about services, service area, portfolio, photos, hours, availability, or similar business questions\n- questionType should be one of: services, service_area, portfolio, hours, availability, other, or null\n- answer should contain a short helpful text response if the customer asked a question\n- if the message is mainly a lead request, answer should be null unless the message also contains a question\n- do not include markdown\n- do not include explanations\n- output JSON only\n\nCustomer message:\n{{ $json.body.Body }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -448,
+        32
+      ],
+      "id": "70eacceb-86b2-4982-9ef0-ab7309e24b2d",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -448,
+        240
+      ],
+      "id": "a01224aa-191f-4879-b1b8-2e6365be2383",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "TLgr0QVVSQWSzah8",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send an SMS/MMS/WhatsApp message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Send an SMS/MMS/WhatsApp message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "1917d0cb-209e-459e-aa4b-4457514ff957",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "243e2d34668011de2adfed2a60f898a57fe07379caa43c27d1ef0d3d6482077e"
+  },
+  "id": "UzKhaZxplC7E5Oyw",
+  "tags": []
+}
